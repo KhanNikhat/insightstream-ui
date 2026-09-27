@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 
-const API_BASE_URL = 'http://localhost:5000/api/projects';
+const API_BASE_URL = 'https://insightstream-backend-hcpi.onrender.com/api/projects';
 
 export default function ProjectHistory({ onSelectProject, user }) {
   const [projects, setProjects] = useState([]);
