@@ -1,45 +1,209 @@
+import { useState } from 'react';
+import Sidebar from './components/layout/Sidebar';
+import Navbar from './components/layout/Navbar';
+import DashboardCanvas from './components/workspace/DashboardCanvas';
+import DataVisualizer from './components/workspace/DataVisualizer';
+import ChatAssistant from './components/workspace/ChatAssistant';
+import ProjectHistory from './components/history/ProjectHistory';
+import AuthModal from './components/auth/AuthModal';
+
 function App() {
+  // Navigation & Modal State
+  const [activeTab, setActiveTab] = useState('workspace'); // 'workspace' | 'history'
+  const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [user, setUser] = useState(() => {
+    const stored = localStorage.getItem('user');
+    return stored ? JSON.parse(stored) : null;
+  });
+
+  // Workspace Data, AI Blueprint & Chat State
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [datasetFileName, setDatasetFileName] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [dataset, setDataset] = useState([]);
+  const [aiChartConfig, setAiChartConfig] = useState(null);
+  const [chatMessages, setChatMessages] = useState([]);
+
+  const openAuth = () => setIsAuthOpen(true);
+  const closeAuth = () => setIsAuthOpen(false);
+
+  // 1. Function to save current active session to MongoDB Atlas
+  const handleSaveSession = async () => {
+    if (!dataset || dataset.length === 0) {
+      alert("⚠️ Please upload a CSV dataset before saving a project session!");
+      return;
+    }
+
+    const activeFileName = datasetFileName || selectedFile?.name || 'Dataset';
+    const title = prompt("Enter a title for this exploration session:", `Analysis - ${activeFileName}`);
+    if (!title) return; // User canceled
+
+    const payload = {
+      userId: user?.email || user?.id || 'default_user',
+      title,
+      datasetName: activeFileName,
+      rowCount: dataset.length,
+      colCount: dataset.length > 0 ? Object.keys(dataset[0]).length : 0,
+      completeness: '100%',
+      chartConfig: aiChartConfig || { type: 'bar', xAxis: '', yAxis: '' },
+      rawDataset: dataset,
+      chatHistory: chatMessages || [],
+      notes: 'Saved from dashboard session'
+    };
+
+    try {
+      const res = await fetch('http://localhost:5000/api/projects/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        alert('✅ Session saved successfully to MongoDB Atlas!');
+      } else {
+        const errData = await res.json();
+        alert(`⚠️ Save failed: ${errData.error || 'Server error'}`);
+      }
+    } catch (err) {
+      console.error('Save session error:', err);
+      alert('⚠️ Server connection error. Ensure backend is running on port 5000.');
+    }
+  };
+
+  // 2. Function to restore a selected session into active UI state
+  const handleSelectProject = (selectedProject) => {
+    if (selectedProject.rawDataset && selectedProject.rawDataset.length > 0) {
+      setDataset(selectedProject.rawDataset);
+    }
+    if (selectedProject.chatHistory) {
+      setChatMessages(selectedProject.chatHistory);
+    }
+    if (selectedProject.chartConfig) {
+      setAiChartConfig(selectedProject.chartConfig);
+    }
+    if (selectedProject.datasetName) {
+      setDatasetFileName(selectedProject.datasetName);
+    }
+
+    alert(`✅ Loaded session: "${selectedProject.title}"`);
+    setActiveTab('workspace'); // Navigates to main workspace tab
+  };
+
+  // Clear user authentication and reset workspace state on logout
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setUser(null);
+
+    // Reset workspace state on sign-out
+    setSelectedFile(null);
+    setDatasetFileName('');
+    setDataset([]);
+    setAiChartConfig(null);
+    setChatMessages([]);
+    setIsProcessing(false);
+  };
+
   return (
-    // 1. The Main Wrapper: Full screen height, ultra-dark background, text color, and Flexbox to put children side-by-side
-    <div className="flex h-screen bg-neutral-950 text-neutral-100 font-sans">
+    <div className="flex h-screen bg-[#FAF5F9] text-slate-800 antialiased font-sans overflow-hidden">
       
-      {/* 2. The Sidebar: Fixed width (w-64 = 16rem), subtle right border*/}
-      <aside className="w-64 border-r border-neutral-800 bg-neutral-900/50 p-6 flex flex-col">
-        <h1 className="text-xl font-bold tracking-tight text-white mb-8">
-          InsightStream<span className="text-emerald-400">.AI</span>
-        </h1>
-        
-        <nav className="flex flex-col gap-4 text-sm text-neutral-400">
-          <a href="#" className="hover:text-white transition-colors">Dashboard</a>
-          <a href="#" className="hover:text-white transition-colors">Data Upload</a>
-          <a href="#" className="hover:text-white transition-colors">Chat Assistant</a>
-          <a href="#" className="hover:text-white transition-colors">Settings</a>
-        </nav>
-      </aside>
+      {/* Sidebar Navigation */}
+      <Sidebar 
+        activeTab={activeTab} 
+        setActiveTab={setActiveTab} 
+        openAuth={openAuth} 
+      />
 
-      {/* 3. The Main Content Area: flex-1 makes it take up all remaining space*/}
-      <main className="flex-1 flex flex-col">
+      {/* Main Content Area */}
+      <main className="flex-1 flex flex-col overflow-hidden">
         
-        {/* 4. The Top Navbar: Fixed height, subtle bottom border*/}
-        <header className="h-16 border-b border-neutral-800 flex items-center justify-between px-8">
-          <div className="text-sm text-neutral-400">Workspace / Analytics</div>
-          <div className="h-8 w-8 rounded-full bg-neutral-800 border border-neutral-700"></div>
-        </header>
+        {/* Top Navbar */}
+        <Navbar 
+          selectedFile={selectedFile}
+          activeDatasetName={datasetFileName || selectedFile?.name}
+          user={user} 
+          openAuth={openAuth}
+          onOpenAuth={openAuth}
+          onLogout={handleLogout}
+          activeTab={activeTab}
+          onSaveSession={handleSaveSession}
+          hasDataset={dataset.length > 0}
+        />
 
-        {/* 5. The Dashboard Canvas: Where our charts and upload boxes will go*/}
-        <section className="p-8">
-          <h2 className="text-2xl font-semibold mb-6">Overview</h2>
+        {/* Scrollable Screen Content */}
+        <div className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 relative">
           
-          {/* Placeholder for a chart or upload zone */}
-          <div className="h-64 rounded-xl border border-neutral-800 bg-neutral-900/30 flex items-center justify-center border-dashed">
-            <p className="text-neutral-500 text-sm">Drop CSV file here to begin analysis...</p>
-          </div>
-        </section>
+          {/* VIEW 1: WORKSPACE */}
+          {activeTab === 'workspace' && (
+            <div>
+              {/* Workspace Header Actions */}
+              {dataset.length > 0 && !isProcessing && (
+                <div className="flex justify-end mb-4">
+                  <button
+                    onClick={handleSaveSession}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-pink-500 to-purple-600 text-white font-semibold text-xs shadow hover:opacity-95 transition-all"
+                  >
+                    💾 Save Session to Cloud
+                  </button>
+                </div>
+              )}
 
+              {/* CSV Upload Area */}
+              <DashboardCanvas
+                selectedFile={selectedFile} 
+                setSelectedFile={(file) => {
+                  setSelectedFile(file);
+                  if (file) setDatasetFileName(file.name);
+                }}
+                isProcessing={isProcessing}
+                setIsProcessing={setIsProcessing}
+                setDataset={setDataset}
+              />
+
+              {/* TWO-COLUMN LAYOUT: Rendered when dataset is ready */}
+              {dataset.length > 0 && !isProcessing && (
+                <div className="flex flex-col xl:flex-row gap-6 mt-6 w-full animate-fade-in">
+                  
+                  {/* LEFT COLUMN: Dynamic Data Charts */}
+                  <div className="flex-1 min-w-0">
+                    <DataVisualizer data={dataset} aiChartConfig={aiChartConfig} />
+                  </div>
+
+                  {/* RIGHT COLUMN: AI Chat Assistant */}
+                  <div className="w-full xl:w-[400px] flex-shrink-0">
+                    <ChatAssistant 
+                      dataset={dataset} 
+                      onUpdateChart={setAiChartConfig}
+                      chatMessages={chatMessages}
+                      setChatMessages={setChatMessages}
+                    />
+                  </div>
+                  
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* VIEW 2: PROJECT HISTORY */}
+          {activeTab === 'history' && (
+            <ProjectHistory onSelectProject={handleSelectProject}
+            user={user}
+             />
+          )}
+
+        </div>
       </main>
-      
+
+      {/* AUTHENTICATION OVERLAY MODAL */}
+      {isAuthOpen && (
+        <AuthModal 
+          onClose={closeAuth} 
+          setUser={setUser} 
+        />
+      )}
+
     </div>
-  )
+  );
 }
 
-export default App
+export default App;

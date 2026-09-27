@@ -1,0 +1,14 @@
+# Security
+.env
+
+# Dependencies (Never upload node_modules because it is massive)
+node_modules/
+
+# Mac system files (if you are on a Mac)
+.DS_Store
+
+# User file uploads
+uploads/
+
+# Log files
+*.log
