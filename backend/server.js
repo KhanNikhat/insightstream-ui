@@ -1,17 +1,5 @@
-const dns = require('dns');
-dns.setServers(['8.8.8.8', '8.8.4.4']); // Force Node.js to use Google Public DNS
-dns.setDefaultResultOrder('ipv4first');
-
-const cors = require('cors');
-
-app.use(cors({
-  origin: '*', // or 'http://localhost:5173'
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-
-
 require('dotenv').config();
+const dns = require('dns');
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
@@ -20,6 +8,13 @@ const fs = require('fs');
 const csv = require('csv-parser');
 const path = require('path');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+// Force Node.js to use Google Public DNS
+dns.setServers(['8.8.8.8', '8.8.4.4']);
+dns.setDefaultResultOrder('ipv4first');
+
+// Import Mongoose Models
+const Project = require('./models/Project');
 
 // Import Route Handlers
 const authRoutes = require('./routes/auth');
@@ -33,15 +28,58 @@ const PORT = process.env.PORT || 5000;
 const apiKey = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
 console.log("Diagnostic Check - API Key:", apiKey ? "Key successfully loaded!" : "DANGER: KEY IS MISSING!");
 
-// 2. Core Middleware (50mb limit to handle saving full raw CSV datasets to MongoDB)
-app.use(cors());
+// 2. Core Middleware & CORS Configuration
+app.use(cors({
+  origin: '*', // Allow all origins for development and deployment
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// 3. Mount Authentication & Project History APIs
+// 3. Mount Authentication, Project History & Dataset APIs
 app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/datasets', datasetRoutes);
+
+// Express Route: PUT /api/projects/update/:id
+app.put('/api/projects/update/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { datasetName, rowCount, colCount, completeness, chartConfig, rawDataset, chatHistory, notes } = req.body;
+
+    // Find project by ID and update fields
+    const updatedProject = await Project.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          datasetName,
+          rowCount,
+          colCount,
+          completeness,
+          chartConfig,
+          rawDataset,
+          chatHistory,
+          notes,
+          updatedAt: new Date()
+        }
+      },
+      { new: true } // Returns the updated document
+    );
+
+    if (!updatedProject) {
+      return res.status(404).json({ error: 'Project session not found.' });
+    }
+
+    res.status(200).json({ 
+      message: 'Session updated successfully!', 
+      project: updatedProject 
+    });
+  } catch (err) {
+    console.error('Error updating project:', err);
+    res.status(500).json({ error: 'Failed to update project session.' });
+  }
+});
 
 // 4. Initialize Gemini AI Model
 const genAI = new GoogleGenerativeAI(apiKey);
@@ -95,7 +133,7 @@ app.post('/api/chat', async (req, res) => {
 
     console.log(`Sending question to AI: "${question}"`);
 
-    // Convert dataset array into CSV string context for AI (slice first 100 rows if dataset is massive)
+    // Convert dataset array into CSV string context for AI (slice first 150 rows if dataset is massive)
     const datasetSample = activeDataset.slice(0, 150);
     const csvHeaders = Object.keys(datasetSample[0]).join(',');
     const csvRows = datasetSample.map(row => Object.values(row).join(',')).join('\n');
@@ -163,43 +201,3 @@ mongoose
   .catch((err) => {
     console.error("MongoDB Connection Error:", err.message);
   });
-
-
-  // Express Route: PUT /api/projects/update/:id
-app.put('/api/projects/update/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { datasetName, rowCount, colCount, completeness, chartConfig, rawDataset, chatHistory, notes } = req.body;
-
-    // Find project by ID and update fields
-    const updatedProject = await Project.findByIdAndUpdate(
-      id,
-      {
-        $set: {
-          datasetName,
-          rowCount,
-          colCount,
-          completeness,
-          chartConfig,
-          rawDataset,
-          chatHistory,
-          notes,
-          updatedAt: new Date()
-        }
-      },
-      { new: true } // Returns the updated document
-    );
-
-    if (!updatedProject) {
-      return res.status(404).json({ error: 'Project session not found.' });
-    }
-
-    res.status(200).json({ 
-      message: 'Session updated successfully!', 
-      project: updatedProject 
-    });
-  } catch (err) {
-    console.error('Error updating project:', err);
-    res.status(500).json({ error: 'Failed to update project session.' });
-  }
-});
