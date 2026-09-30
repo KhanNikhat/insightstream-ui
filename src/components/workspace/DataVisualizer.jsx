@@ -16,7 +16,7 @@ import {
 
 const PIE_COLORS = ['#ec4899', '#8b5cf6', '#6366f1', '#3b82f6', '#10b981', '#f59e0b', '#ef4444'];
 
-export default function DataVisualizer({ data, aiChartConfig }) {
+export default function DataVisualizer({ data, aiChartConfig, onChartConfigChange }) {
   const [chartType, setChartType] = useState('bar'); // 'bar' | 'line' | 'pie'
 
   // Extract column keys and identify numeric vs categorical
@@ -53,6 +53,17 @@ export default function DataVisualizer({ data, aiChartConfig }) {
       }
     }
   }, [aiChartConfig, columns]);
+
+  // Sync active chart state back to parent so Save Session captures manual changes
+  useEffect(() => {
+    if (onChartConfigChange && xAxis && yAxis) {
+      onChartConfigChange({
+        type: chartType,
+        xAxis: xAxis,
+        yAxis: yAxis
+      });
+    }
+  }, [chartType, xAxis, yAxis, onChartConfigChange]);
 
   // Calculate high-level KPI summary stats
   const kpis = useMemo(() => {

@@ -27,12 +27,21 @@ const formatMarkdown = (text) => {
   });
 };
 
-export default function ChatAssistant({ dataset = [], onUpdateChart }) {
+export default function ChatAssistant({ 
+  dataset = [], 
+  onUpdateChart, 
+  chatMessages = [], 
+  setChatMessages 
+}) {
   const colNames = useMemo(() => {
     return dataset && dataset.length > 0 ? Object.keys(dataset[0]).join(', ') : '';
   }, [dataset]);
 
+  // Initialize messages from parent state (restored session) or fallback to initial greeting
   const [messages, setMessages] = useState(() => {
+    if (chatMessages && chatMessages.length > 0) {
+      return chatMessages;
+    }
     if (dataset && dataset.length > 0) {
       return [
         {
@@ -51,16 +60,33 @@ export default function ChatAssistant({ dataset = [], onUpdateChart }) {
   const chatEndRef = useRef(null);
   const lastLoadedDatasetRef = useRef(dataset);
 
+  // 1. SYNC TO PARENT: Whenever local messages update, send them to App.jsx so handleSaveSession receives them
+  useEffect(() => {
+    if (setChatMessages) {
+      setChatMessages(messages);
+    }
+  }, [messages, setChatMessages]);
+
+  // 2. RESTORE FROM PARENT: Whenever Project History restores a project, load saved messages into local state
+  useEffect(() => {
+    if (chatMessages && chatMessages.length > 0 && chatMessages !== messages) {
+      setMessages(chatMessages);
+    }
+  }, [chatMessages]);
+
+  // Auto-scroll to bottom of chat
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isThinking]);
 
+  // Append notification when dataset is updated without wiping previous chat
   useEffect(() => {
     if (dataset && dataset.length > 0 && lastLoadedDatasetRef.current !== dataset) {
       lastLoadedDatasetRef.current = dataset;
       const updatedCols = Object.keys(dataset[0]).join(', ');
 
-      setMessages([
+      setMessages((prev) => [
+        ...prev,
         {
           id: `dataset-updated-${Date.now()}`,
           sender: 'ai',
@@ -72,10 +98,9 @@ export default function ChatAssistant({ dataset = [], onUpdateChart }) {
   }, [dataset]);
 
   const quickPrompts = [
-    "Plot a Bar Chart",
-    "Show Line Trend",
     "Summarize key metrics",
-    "Find data anomalies"
+    "Find data anomalies",
+    "Data cleaning steps suggested"
   ];
 
   const datasetStats = useMemo(() => {
@@ -97,6 +122,49 @@ export default function ChatAssistant({ dataset = [], onUpdateChart }) {
 
     return numericSummary;
   }, [dataset]);
+
+  // Helper function to call Gemini API with backoff retries
+  const callGeminiWithRetry = async (systemPrompt, userQuery, retries = 3, delay = 2000) => {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  { text: systemPrompt },
+                  { text: `User Prompt: "${userQuery}"` }
+                ]
+              }
+            ],
+            generationConfig: {
+              responseMimeType: 'application/json'
+            }
+          })
+        });
+
+        const resData = await response.json();
+
+        if (!response.ok) {
+          if ((response.status === 503 || resData.error?.message?.includes('high demand')) && attempt < retries - 1) {
+            await new Promise((res) => setTimeout(res, delay));
+            continue;
+          }
+          throw new Error(resData.error?.message || `HTTP ${response.status}: API Request failed`);
+        }
+
+        return resData;
+      } catch (err) {
+        if (attempt === retries - 1) throw err;
+        await new Promise((res) => setTimeout(res, delay));
+      }
+    }
+  };
 
   const handleSend = async (textToSend) => {
     const query = textToSend || input;
@@ -130,7 +198,6 @@ export default function ChatAssistant({ dataset = [], onUpdateChart }) {
     }
 
     try {
-      // 1. Explicit pre-flight check for API key
       if (!GEMINI_API_KEY || GEMINI_API_KEY === 'undefined') {
         throw new Error('VITE_GEMINI_API_KEY is missing or undefined in your .env file.');
       }
@@ -162,34 +229,7 @@ CRITICAL: Output STRICT JSON only with this structure:
 }
 `;
 
-      // 2. Call Gemini API using standard model endpoint
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${GEMINI_API_KEY}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [
-              {
-                role: 'user',
-                parts: [
-                  { text: systemPrompt },
-                  { text: `User Prompt: "${query}"` }
-                ]
-              }
-            ],
-            generationConfig: {
-              responseMimeType: 'application/json'
-            }
-          })
-        }
-      );
-
-      const resData = await response.json();
-
-      if (!response.ok) {
-        throw new Error(resData.error?.message || `HTTP ${response.status}: API Request failed`);
-      }
+      const resData = await callGeminiWithRetry(systemPrompt, query);
 
       const rawText = resData.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!rawText) {
@@ -216,7 +256,6 @@ CRITICAL: Output STRICT JSON only with this structure:
       }
     } catch (err) {
       console.error('Gemini API Error Details:', err);
-      // Directly render the exact error string in the UI bubble
       setMessages((prev) => [
         ...prev,
         {

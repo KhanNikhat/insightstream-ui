@@ -2,6 +2,15 @@ const dns = require('dns');
 dns.setServers(['8.8.8.8', '8.8.4.4']); // Force Node.js to use Google Public DNS
 dns.setDefaultResultOrder('ipv4first');
 
+const cors = require('cors');
+
+app.use(cors({
+  origin: '*', // or 'http://localhost:5173'
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -154,3 +163,43 @@ mongoose
   .catch((err) => {
     console.error("MongoDB Connection Error:", err.message);
   });
+
+
+  // Express Route: PUT /api/projects/update/:id
+app.put('/api/projects/update/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { datasetName, rowCount, colCount, completeness, chartConfig, rawDataset, chatHistory, notes } = req.body;
+
+    // Find project by ID and update fields
+    const updatedProject = await Project.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          datasetName,
+          rowCount,
+          colCount,
+          completeness,
+          chartConfig,
+          rawDataset,
+          chatHistory,
+          notes,
+          updatedAt: new Date()
+        }
+      },
+      { new: true } // Returns the updated document
+    );
+
+    if (!updatedProject) {
+      return res.status(404).json({ error: 'Project session not found.' });
+    }
+
+    res.status(200).json({ 
+      message: 'Session updated successfully!', 
+      project: updatedProject 
+    });
+  } catch (err) {
+    console.error('Error updating project:', err);
+    res.status(500).json({ error: 'Failed to update project session.' });
+  }
+});
